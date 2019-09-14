@@ -23,6 +23,7 @@ type Customer struct {
 	Status string `json:"status"`
 }
 
+//Authorization check
 func authMiddleware(c *gin.Context) {
 	token := c.GetHeader("Authorization")
 
@@ -36,6 +37,7 @@ func authMiddleware(c *gin.Context) {
 
 }
 
+//Insert customer
 func postCustomer(c *gin.Context) {
 	cust := Customer{}
 
@@ -59,6 +61,7 @@ func postCustomer(c *gin.Context) {
 	c.JSON(http.StatusCreated, cust)
 }
 
+//Get all customers
 func getAllCustomer(c *gin.Context) {
 
 	custs := []Customer{}
@@ -91,6 +94,7 @@ func getAllCustomer(c *gin.Context) {
 	c.JSON(http.StatusOK, custs)
 }
 
+//Get customer by id
 func getOneCustomer(c *gin.Context) {
 	id := c.Param("id")
 
@@ -123,45 +127,29 @@ func getOneCustomer(c *gin.Context) {
 	c.JSON(http.StatusOK, cust)
 }
 
+//Delete customer by id
 func deleteCustomer(c *gin.Context) {
 
 	id := c.Param("id")
 	//Pre-select.
 	var cust Customer
 
-	stmt, err := db.Prepare("SELECT id, name, email, status FROM customers WHERE id = $1")
+	cust, err := preSelect(id)
 	if err != nil {
 		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Prepare SQL select error!!! " + err.Error()})
-		return
-	}
-
-	idnum, err := strconv.Atoi(id)
-	if err != nil {
-		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Convert id to num error!!!" + err.Error()})
-		return
-	}
-
-	row := stmt.QueryRow(idnum)
-
-	err = row.Scan(&cust.ID, &cust.Name, &cust.Email, &cust.Status)
-	if err != nil {
-		log.Println("Select id = " + id)
-		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"message": fmt.Sprintf("Select id %d error!!!: %s", idnum, err.Error())})
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
 
 	//Actual delete.
-	stmt, err = db.Prepare("DELETE FROM customers WHERE id = $1")
+	stmt, err := db.Prepare("DELETE FROM customers WHERE id = $1")
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "Prepare SQL for delete row error!!! " + err.Error()})
 		return
 	}
 
-	_, err = stmt.Exec(idnum)
+	_, err = stmt.Exec(cust.ID)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "Execute deletion error!!! " + err.Error()})
@@ -171,33 +159,15 @@ func deleteCustomer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "customer deleted"})
 }
 
+//Update customer by id
 func updateCustomer(c *gin.Context) {
 	id := c.Param("id")
+	var err error
 
-	//Pre-select.
-	var cust Customer
-
-	stmt, err := db.Prepare("SELECT id, name, email, status FROM customers WHERE id = $1")
+	_, err = preSelect(id)
 	if err != nil {
 		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Prepare SQL select error!!! " + err.Error()})
-		return
-	}
-
-	idnum, err := strconv.Atoi(id)
-	if err != nil {
-		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Convert id to num error!!! " + err.Error()})
-		return
-	}
-
-	row := stmt.QueryRow(idnum)
-
-	err = row.Scan(&cust.ID, &cust.Name, &cust.Email, &cust.Status)
-	if err != nil {
-		log.Println("Select id = " + id)
-		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"message": fmt.Sprintf("Select id %d error!!!: %s", idnum, err.Error())})
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
 
@@ -211,14 +181,21 @@ func updateCustomer(c *gin.Context) {
 		return
 	}
 
-	stmt, err = db.Prepare("UPDATE customers SET name=$2,email=$3,status=$4 WHERE id=$1")
+	stmt, err := db.Prepare("UPDATE customers SET name=$2,email=$3,status=$4 WHERE id=$1")
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "Prepare SQL for update error!!! " + err.Error()})
 		return
 	}
 
-	_, err = stmt.Exec(id, custUpdate.Name, custUpdate.Email, custUpdate.Status)
+	custUpdate.ID, err = strconv.Atoi(id)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Prepare SQL for update error!!! " + err.Error()})
+		return
+	}
+
+	_, err = stmt.Exec(custUpdate.ID, custUpdate.Name, custUpdate.Email, custUpdate.Status)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "Execute update error!!! " + err.Error()})
@@ -250,6 +227,7 @@ func main() {
 	defer db.Close()
 }
 
+//Create table if not exist and connect to DB.
 func createTable() {
 	var err error
 	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
@@ -274,4 +252,29 @@ func createTable() {
 	}
 
 	fmt.Println("Successfully create table.")
+}
+
+//Pre-select function to check exist customer before update and delete.
+func preSelect(id string) (Customer, error) {
+	//Pre-select.
+	var cust Customer
+
+	stmt, err := db.Prepare("SELECT id, name, email, status FROM customers WHERE id = $1")
+	if err != nil {
+		return Customer{}, err
+	}
+
+	idnum, err := strconv.Atoi(id)
+	if err != nil {
+		return Customer{}, err
+	}
+
+	row := stmt.QueryRow(idnum)
+
+	err = row.Scan(&cust.ID, &cust.Name, &cust.Email, &cust.Status)
+	if err != nil {
+		return Customer{}, err
+	}
+
+	return cust, nil
 }
